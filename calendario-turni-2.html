@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calendario Turni</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #f1f5f9; font-family: 'Segoe UI', sans-serif; }
+    textarea:focus { border-color: #3b82f6 !important; }
+    button:active { opacity: 0.85; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBO-oZWTebOyZJOyUbQd0DBD2iBsBcu6bs",
+      authDomain: "turni-cascas.firebaseapp.com",
+      projectId: "turni-cascas",
+      storageBucket: "turni-cascas.firebasestorage.app",
+      messagingSenderId: "493012351603",
+      appId: "1:493012351603:web:ae885ca1711f30bda64806"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+  </script>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const SHIFTS = [
+      { code: "TURNO", color: "#2563eb", bg: "#dbeafe" },
+      { code: "SPÄT",  color: "#c2410c", bg: "#ffedd5" },
+      { code: "f",     color: "#15803d", bg: "#dcfce7" },
+      { code: "s",     color: "#0e7490", bg: "#cffafe" },
+      { code: "n",     color: "#3b5bdb", bg: "#e0e7ff" },
+      { code: "FB",    color: "#6d28d9", bg: "#ede9fe" },
+      { code: "TS",    color: "#b91c1c", bg: "#fee2e2" },
+      { code: "UA",    color: "#b45309", bg: "#fef3c7" },
+      { code: "UG",    color: "#be185d", bg: "#fce7f3" },
+    ];
+
+    const MONTHS = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno",
+                    "Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+    const DAYS = ["Lu","Ma","Me","Gi","Ve","Sa","Do"];
+
+    function getDaysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+    function getFirstDay(y, m)    { return (new Date(y, m, 1).getDay() + 6) % 7; }
+    function emptyDay()           { return { codes: [], note: "", asiloChiuso: false }; }
+    function getDay(data, key)    { return data[key] || emptyDay(); }
+
+    const navBtn = {
+      background:"#ffffff", border:"1px solid #e2e8f0",
+      borderRadius:8, color:"#64748b", fontSize:20,
+      width:36, height:36, cursor:"pointer",
+      display:"inline-flex", alignItems:"center", justifyContent:"center",
+    };
+
+    function App() {
+      const today = new Date();
+      const [year, setYear]             = useState(today.getFullYear());
+      const [month, setMonth]           = useState(today.getMonth());
+      const [data, setData]             = useState({});
+      const [selected, setSelected]     = useState(null);
+      const [noteText, setNoteText]     = useState("");
+      const [syncStatus, setSyncStatus] = useState("Connessione…");
+      const docRef = db.collection("calendari").doc("turni");
+
+      useEffect(() => {
+        const unsubscribe = docRef.onSnapshot(
+          snap => {
+            setData(snap.exists ? (snap.data().giorni || {}) : {});
+            setSyncStatus("✓ Sincronizzato");
+            setTimeout(() => setSyncStatus(""), 2000);
+          },
+          err => { console.error(err); setSyncStatus("⚠ Errore connessione"); }
+        );
+        return () => unsubscribe();
+      }, []);
+
+      async function persist(newData) {
+        setSyncStatus("Salvataggio…");
+        try {
+          await docRef.set({ giorni: newData }, { merge: true });
+        } catch (e) {
+          setSyncStatus("⚠ Errore salvataggio");
+        }
+      }
+
+      function openDay(dayKey) {
+        setSelected(dayKey);
+        setNoteText(getDay(data, dayKey).note);
+      }
+
+      function toggleShift(dayKey, code) {
+        const day = { ...getDay(data, dayKey) };
+        const idx = day.codes.indexOf(code);
+        day.codes = idx >= 0 ? day.codes.filter((_, i) => i !== idx) : [...day.codes, code];
+        persist({ ...data, [dayKey]: day });
+      }
+
+      function toggleAsilo(dayKey) {
+        const day = { ...getDay(data, dayKey) };
+        day.asiloChiuso = !day.asiloChiuso;
+        const updated = { ...data, [dayKey]: day };
+        if (!day.codes.length && !day.note && !day.asiloChiuso) delete updated[dayKey];
+        persist(updated);
+      }
+
+      function saveNote(dayKey) {
+        const day = { ...getDay(data, dayKey), note: noteText.trim() };
+        const updated = { ...data, [dayKey]: day };
+        if (!day.codes.length && !day.note && !day.asiloChiuso) delete updated[dayKey];
+        persist(updated);
+      }
+
+      function clearDay(dayKey) {
+        const updated = { ...data };
+        delete updated[dayKey];
+        persist(updated);
+        setSelected(null);
+      }
+
+      function prevMonth() {
+        if (month === 0) { setYear(y => y-1); setMonth(11); }
+        else setMonth(m => m-1);
+      }
+      function nextMonth() {
+        if (month === 11) { setYear(y => y+1); setMonth(0); }
+        else setMonth(m => m+1);
+      }
+
+      const todayKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+      const daysInMonth = getDaysInMonth(year, month);
+      const firstDay    = getFirstDay(year, month);
+      const cells = [...Array(firstDay).fill(null), ...Array.from({length: daysInMonth}, (_,i) => i+1)];
+
+      const statusColor = syncStatus.startsWith("✓") ? "#22c55e"
+                        : syncStatus.startsWith("⚠") ? "#f87171"
+                        : "#94a3b8";
+
+      return (
+        <div style={{ minHeight:"100vh", background:"#f1f5f9", display:"flex", flexDirection:"column", alignItems:"center", padding:"24px 12px 80px" }}>
+
+          {/* Header */}
+          <div style={{ width:"100%", maxWidth:560, marginBottom:20 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+              <span style={{ color:"#94a3b8", fontSize:11, letterSpacing:3, textTransform:"uppercase" }}>Calendario Turni</span>
+              <span style={{ fontSize:11, color: statusColor, transition:"color 0.3s" }}>{syncStatus}</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <button onClick={prevMonth} style={navBtn}>‹</button>
+              <h1 style={{ flex:1, textAlign:"center", color:"#1e293b", fontSize:22, fontWeight:700, margin:0, letterSpacing:1 }}>
+                {MONTHS[month]} {year}
+              </h1>
+              <button onClick={nextMonth} style={navBtn}>›</button>
+            </div>
+          </div>
+
+          {/* Calendar grid */}
+          <div style={{ width:"100%", maxWidth:560 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3, marginBottom:3 }}>
+              {DAYS.map(d => (
+                <div key={d} style={{ textAlign:"center", color:"#94a3b8", fontSize:11, fontWeight:600, letterSpacing:1, padding:"4px 0" }}>{d}</div>
+              ))}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3 }}>
+              {cells.map((day, i) => {
+                if (!day) return <div key={`e-${i}`} />;
+                const dayKey     = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                const dayData    = getDay(data, dayKey);
+                const dayShifts  = dayData.codes.map(c => SHIFTS.find(s => s.code === c)).filter(Boolean);
+                const hasNote    = !!dayData.note;
+                const asiloChiuso = !!dayData.asiloChiuso;
+                const firstShift = dayShifts[0];
+                const isToday    = dayKey === todayKey;
+                const isSelected = selected === dayKey;
+                const isWeekend  = ((firstDay + day - 1) % 7) >= 5;
+
+                // Colore sfondo: asilo chiuso ha precedenza visiva se non c'è un turno
+                const bgColor = isSelected ? "#1e40af"
+                              : firstShift ? firstShift.bg
+                              : asiloChiuso ? "#fff7ed"
+                              : isWeekend   ? "#e2e8f0"
+                              : "#ffffff";
+
+                const borderColor = isToday    ? "#3b82f6"
+                                  : isSelected ? "#93c5fd"
+                                  : asiloChiuso ? "#f97316"
+                                  : "#e2e8f0";
+
+                return (
+                  <div key={dayKey}
+                    onClick={() => isSelected ? setSelected(null) : openDay(dayKey)}
+                    style={{
+                      borderRadius:8, padding:"5px 3px", minHeight:64, cursor:"pointer",
+                      background: bgColor,
+                      border: `2px solid ${borderColor}`,
+                      display:"flex", flexDirection:"column", alignItems:"center", gap:2,
+                      transition:"all 0.15s", position:"relative",
+                    }}
+                  >
+                    <span style={{ fontSize:11, fontWeight:isToday?700:500,
+                      color: isSelected?"#dbeafe": firstShift?"#64748b": isWeekend?"#94a3b8":"#475569" }}>
+                      {day}
+                    </span>
+                    {dayShifts.map((shift, si) => (
+                      <span key={si} style={{
+                        fontSize: shift.code.length > 3 ? 7 : 10, fontWeight:700,
+                        color: shift.color,
+                        background: si > 0 ? shift.bg : "transparent",
+                        borderRadius: si > 0 ? 3 : 0,
+                        padding: si > 0 ? "1px 3px" : 0,
+                        lineHeight:1.2, textAlign:"center", width:"100%",
+                      }}>{shift.code}</span>
+                    ))}
+                    {/* Icona asilo chiuso */}
+                    {asiloChiuso && (
+                      <span style={{ fontSize:10, lineHeight:1, marginTop:"auto" }}>🏫</span>
+                    )}
+                    {/* Pallino nota */}
+                    {hasNote && (
+                      <div style={{ position:"absolute", top:3, right:4, width:5, height:5, borderRadius:"50%", background:"#f59e0b" }} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Bottom panel */}
+          {selected && (
+            <div onClick={e => e.stopPropagation()} style={{
+              position:"fixed", bottom:0, left:0, right:0,
+              background:"#ffffff", borderTop:"1px solid #e2e8f0",
+              borderRadius:"20px 20px 0 0", padding:"18px 16px 32px",
+              zIndex:100, boxShadow:"0 -8px 32px rgba(0,0,0,0.12)",
+              maxHeight:"72vh", overflowY:"auto",
+            }}>
+              <div style={{ textAlign:"center", color:"#64748b", fontSize:12, marginBottom:14, letterSpacing:1 }}>
+                {selected}
+              </div>
+
+              {/* Turni */}
+              <div style={{ display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center", marginBottom:14 }}>
+                {SHIFTS.map(s => {
+                  const active = getDay(data, selected).codes.includes(s.code);
+                  return (
+                    <button key={s.code} onClick={() => toggleShift(selected, s.code)} style={{
+                      background: active ? s.color : s.bg,
+                      color: active ? "#fff" : s.color,
+                      border: `2px solid ${s.color}`,
+                      borderRadius:8, padding:"8px 14px",
+                      fontSize:13, fontWeight:700, cursor:"pointer",
+                      minWidth:52, letterSpacing:0.5, transition:"all 0.15s",
+                    }}>
+                      {s.code}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Asilo chiuso toggle */}
+              <div style={{ marginBottom:16, borderTop:"1px solid #e2e8f0", paddingTop:14 }}>
+                <button
+                  onClick={() => toggleAsilo(selected)}
+                  style={{
+                    width:"100%", padding:"11px",
+                    borderRadius:10, fontSize:14, fontWeight:700,
+                    cursor:"pointer", transition:"all 0.15s",
+                    border: `2px solid #f97316`,
+                    background: getDay(data, selected).asiloChiuso ? "#f97316" : "#fff7ed",
+                    color:      getDay(data, selected).asiloChiuso ? "#ffffff" : "#f97316",
+                    letterSpacing:0.5,
+                  }}
+                >
+                  🏫 Asilo chiuso {getDay(data, selected).asiloChiuso ? "✓" : ""}
+                </button>
+              </div>
+
+              {/* Note */}
+              <div style={{ marginBottom:16, borderTop:"1px solid #e2e8f0", paddingTop:14 }}>
+                <div style={{ color:"#94a3b8", fontSize:11, letterSpacing:1, textTransform:"uppercase", marginBottom:8 }}>
+                  📝 Nota libera
+                </div>
+                <textarea
+                  value={noteText}
+                  onChange={e => setNoteText(e.target.value)}
+                  placeholder="Aggiungi una nota…"
+                  rows={2}
+                  style={{
+                    width:"100%", background:"#f8fafc", border:"1px solid #e2e8f0",
+                    borderRadius:8, padding:"10px 12px", color:"#1e293b",
+                    fontSize:13, resize:"vertical", fontFamily:"inherit",
+                    outline:"none", lineHeight:1.5,
+                  }}
+                />
+                <button onClick={() => saveNote(selected)} style={{
+                  marginTop:6, background:"#1d4ed8", border:"none",
+                  borderRadius:6, color:"#fff", padding:"7px 18px",
+                  fontSize:12, fontWeight:600, cursor:"pointer",
+                }}>
+                  Salva nota
+                </button>
+              </div>
+
+              <div style={{ display:"flex", gap:8, justifyContent:"center" }}>
+                {(getDay(data, selected).codes.length > 0 || getDay(data, selected).note || getDay(data, selected).asiloChiuso) && (
+                  <button onClick={() => clearDay(selected)} style={{
+                    background:"transparent", color:"#f87171",
+                    border:"2px solid #f87171", borderRadius:8,
+                    padding:"7px 16px", fontSize:12, fontWeight:700, cursor:"pointer",
+                  }}>✕ Svuota giorno</button>
+                )}
+                <button onClick={() => setSelected(null)} style={{
+                  background:"transparent", border:"1px solid #e2e8f0",
+                  borderRadius:8, color:"#94a3b8", padding:"7px 16px",
+                  fontSize:12, cursor:"pointer",
+                }}>Chiudi</button>
+              </div>
+            </div>
+          )}
+
+          {/* Legend */}
+          <div style={{ width:"100%", maxWidth:560, marginTop:28 }}>
+            <div style={{ color:"#cbd5e1", fontSize:10, letterSpacing:2, textTransform:"uppercase", marginBottom:8 }}>Legenda</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {SHIFTS.map(s => (
+                <div key={s.code} style={{ display:"flex", alignItems:"center", gap:5, background:"#ffffff", border:"1px solid #e2e8f0", borderRadius:6, padding:"4px 10px" }}>
+                  <div style={{ width:7, height:7, borderRadius:"50%", background:s.color }} />
+                  <span style={{ color:"#64748b", fontSize:11, fontWeight:600 }}>{s.code}</span>
+                </div>
+              ))}
+              <div style={{ display:"flex", alignItems:"center", gap:5, background:"#fff7ed", border:"2px solid #f97316", borderRadius:6, padding:"4px 10px" }}>
+                <span style={{ fontSize:10 }}>🏫</span>
+                <span style={{ color:"#f97316", fontSize:11, fontWeight:600 }}>Asilo chiuso</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:5, background:"#ffffff", border:"1px solid #e2e8f0", borderRadius:6, padding:"4px 10px" }}>
+                <div style={{ width:7, height:7, borderRadius:"50%", background:"#f59e0b" }} />
+                <span style={{ color:"#64748b", fontSize:11 }}>nota</span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginTop:16, color:"#cbd5e1", fontSize:10, textAlign:"center" }}>
+            Sincronizzazione automatica in tempo reale
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
